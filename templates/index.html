@@ -601,8 +601,7 @@
       <h3 data-i18n="editor_title">Contract Editor</h3>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-outline btn-sm" onclick="resetApp()" data-i18n="new_contract">New Contract</button>
-        <button class="btn btn-outline btn-sm" onclick="exportAs('pdf')" data-i18n="export_pdf">Export PDF</button>
-        <button class="btn btn-outline btn-sm" onclick="exportAs('docx')" data-i18n="export_word">Export Word</button>
+        <button class="btn btn-outline btn-sm" id="export-btn" onclick="exportOriginal()" data-i18n="export_file">Export with Changes</button>
       </div>
     </div>
     <div class="stats-bar" id="stats-bar"></div>
@@ -648,6 +647,7 @@ let currentClauseId = null;
 let contractText = "";
 let contractType = "";
 let currentLang = "en";
+let originalClauseTexts = {};  // Track original text before edits: {clauseId: originalText}
 
 // ===== i18n Translations =====
 const i18n = {
@@ -665,8 +665,7 @@ const i18n = {
     loading_sub: "Reviewing clauses, assessing risks, generating suggestions",
     editor_title: "Contract Editor",
     new_contract: "New Contract",
-    export_pdf: "Export PDF",
-    export_word: "Export Word",
+    export_file: "Export with Changes",
     tab_clauses: "Clauses",
     tab_missing: "Missing",
     tab_strategy: "Strategy",
@@ -712,8 +711,7 @@ const i18n = {
     loading_sub: "审查条款、评估风险、生成建议",
     editor_title: "合同编辑器",
     new_contract: "新合同",
-    export_pdf: "导出 PDF",
-    export_word: "导出 Word",
+    export_file: "导出修改后文件",
     tab_clauses: "条款",
     tab_missing: "缺失条款",
     tab_strategy: "谈判策略",
@@ -876,6 +874,13 @@ async function analyzeContract() {
 
     analysisData = data;
     contractType = data.contract_type || 'General Agreement';
+    // Store original clause texts for tracking edits
+    originalClauseTexts = {};
+    if (data.clauses) {
+      data.clauses.forEach(c => {
+        originalClauseTexts[c.id] = c.original_text;
+      });
+    }
     renderAnalysis(data);
   } catch (err) {
     alert('Analysis failed: ' + err.message);
@@ -1128,19 +1133,24 @@ function addMissingClause(title, text) {
   editor.appendChild(div);
 }
 
-// Export contract as PDF or Word
-async function exportAs(format) {
+// Export contract — modifies the ORIGINAL uploaded file with edits applied
+async function exportOriginal() {
   if (!analysisData || !analysisData.clauses) {
     alert('No contract data to export.');
     return;
   }
 
-  const payload = {
-    clauses: analysisData.clauses,
-    contract_type: analysisData.contract_type || 'Reviewed Contract',
-    parties: analysisData.parties || [],
-    format: format
-  };
+  // Build list of edits (only clauses that were changed)
+  const edits = [];
+  analysisData.clauses.forEach(c => {
+    const origText = originalClauseTexts[c.id];
+    const currentText = c.original_text;
+    if (origText && currentText && origText !== currentText) {
+      edits.push({ old_text: origText, new_text: currentText });
+    }
+  });
+
+  const payload = { edits: edits };
 
   try {
     const response = await fetch('/api/export', {
@@ -1156,13 +1166,14 @@ async function exportAs(format) {
     }
 
     const blob = await response.blob();
-    const ext = format === 'docx' ? 'docx' : 'pdf';
-    const mime = format === 'docx'
-      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      : 'application/pdf';
+    const disposition = response.headers.get('Content-Disposition') || '';
+    let filename = 'clauseguard-contract';
+    const match = disposition.match(/filename=(.+)/);
+    if (match) filename = match[1].replace(/"/g, '');
+
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([blob], { type: mime }));
-    a.download = `clauseguard-reviewed-contract.${ext}`;
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
     a.click();
   } catch (err) {
     alert('Export failed: ' + err.message);

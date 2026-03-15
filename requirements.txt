@@ -4,3 +4,4 @@ openai
 python-docx
 PyPDF2
 fpdf2
+PyMuPDF

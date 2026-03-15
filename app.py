@@ -9,6 +9,7 @@ import re
 import io
 import uuid
 import hashlib
+import tempfile
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file, session
 from openai import OpenAI
@@ -29,6 +30,9 @@ if GROQ_API_KEY:
 
 # In-memory storage for contract history (use database in production)
 contract_history = {}
+
+# In-memory storage for original uploaded files (keyed by session ID)
+uploaded_files = {}
 
 LANG_INSTRUCTION = {
     'zh': '\n\nIMPORTANT: You MUST respond with all text fields (risk_explanation, suggested_revision, revision_rationale, executive_summary, negotiation_tips, legal_notes, risk_change, enforceability_notes, legal_reference) in Chinese (Simplified). Keep JSON keys, risk levels (HIGH/MEDIUM/LOW), and party names in English. The original_text should remain as-is from the contract.',
@@ -115,13 +119,33 @@ def analyze_contract():
     """Full contract risk analysis."""
     contract_text = ""
     lang = 'en'
+    sid = get_session_id()
 
     if 'file' in request.files and request.files['file'].filename:
-        contract_text = extract_text_from_file(request.files['file'])
+        uploaded_file = request.files['file']
+        filename = uploaded_file.filename.lower()
+        file_bytes = uploaded_file.read()
+
+        # Store original file for later export
+        uploaded_files[sid] = {
+            'bytes': file_bytes,
+            'filename': uploaded_file.filename,
+            'type': 'pdf' if filename.endswith('.pdf') else 'docx' if filename.endswith('.docx') else 'txt'
+        }
+
+        # Extract text from the stored bytes
+        uploaded_file.seek(0)
+        contract_text = extract_text_from_file(uploaded_file)
         lang = request.form.get('lang', 'en')
     elif request.json and 'text' in request.json:
         contract_text = request.json['text']
         lang = request.json.get('lang', 'en')
+        # Store as txt for pasted text
+        uploaded_files[sid] = {
+            'bytes': contract_text.encode('utf-8'),
+            'filename': 'contract.txt',
+            'type': 'txt'
+        }
     else:
         return jsonify({"error": "No contract text provided"}), 400
 
@@ -237,150 +261,217 @@ def get_history():
 
 @app.route('/api/export', methods=['POST'])
 def export_contract():
-    """Export the reviewed contract as PDF or DOCX."""
+    """Export the contract with edits applied to the ORIGINAL uploaded file."""
     data = request.json
-    clauses = data.get('clauses', [])
-    contract_type = data.get('contract_type', 'Reviewed Contract')
-    parties = data.get('parties', [])
-    export_format = data.get('format', 'pdf')
+    edits = data.get('edits', [])  # [{old_text, new_text}, ...]
 
-    if not clauses:
-        return jsonify({"error": "No clauses to export"}), 400
+    sid = get_session_id()
+    original = uploaded_files.get(sid)
 
-    if export_format == 'docx':
-        return export_docx(clauses, contract_type, parties)
-    else:
-        return export_pdf(clauses, contract_type, parties)
+    if not original:
+        return jsonify({"error": "No original file found. Please re-upload and analyze first."}), 400
 
+    file_type = original['type']
+    file_bytes = original['bytes']
+    filename = original['filename']
 
-def safe_text(text):
-    """Remove characters that can't be encoded in latin-1 for PDF."""
-    return text.encode('latin-1', errors='replace').decode('latin-1')
+    # If no edits, return the original file as-is
+    if not edits:
+        buf = io.BytesIO(file_bytes)
+        if file_type == 'pdf':
+            return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                             download_name=filename)
+        elif file_type == 'docx':
+            return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                             as_attachment=True, download_name=filename)
+        else:
+            return send_file(buf, mimetype='text/plain', as_attachment=True, download_name=filename)
 
-
-def export_pdf(clauses, contract_type, parties):
-    """Generate a professional PDF of the reviewed contract."""
     try:
-        from fpdf import FPDF
-
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=25)
-        pdf.add_page()
-
-        pdf.set_font('Helvetica', 'B', 18)
-        pdf.cell(0, 15, safe_text(contract_type.upper()), ln=True, align='C')
-        pdf.ln(5)
-
-        if parties:
-            pdf.set_font('Helvetica', '', 11)
-            pdf.cell(0, 8, safe_text(f'Parties: {" and ".join(parties)}'), ln=True, align='C')
-            pdf.ln(5)
-
-        pdf.set_font('Helvetica', 'I', 9)
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 8, 'Reviewed and revised by ClauseGuard AI', ln=True, align='C')
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(10)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(8)
-
-        for clause in clauses:
-            title = clause.get('title', 'Untitled Clause')
-            text = clause.get('original_text', '')
-            risk = clause.get('risk_level', 'LOW')
-
-            pdf.set_font('Helvetica', 'B', 13)
-            risk_label = f' [{risk} RISK]' if risk in ('HIGH', 'MEDIUM') else ''
-            pdf.cell(0, 10, safe_text(f'{title}{risk_label}'), ln=True)
-
-            pdf.set_font('Helvetica', '', 11)
-            pdf.multi_cell(0, 6, safe_text(text))
-            pdf.ln(6)
-
-        pdf.ln(10)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(5)
-        pdf.set_font('Helvetica', 'I', 9)
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 8, 'Reviewed by ClauseGuard AI. Not legal advice.', ln=True, align='C')
-
-        buf = io.BytesIO()
-        pdf.output(buf)
-        buf.seek(0)
-
-        return send_file(buf, mimetype='application/pdf', as_attachment=True,
-                         download_name='clauseguard-reviewed-contract.pdf')
+        if file_type == 'docx':
+            return export_modified_docx(file_bytes, edits, filename)
+        elif file_type == 'pdf':
+            return export_modified_pdf(file_bytes, edits, filename)
+        else:
+            return export_modified_txt(file_bytes, edits, filename)
     except Exception as e:
-        return jsonify({"error": f"PDF export failed: {str(e)}"}), 500
+        return jsonify({"error": f"Export failed: {str(e)}"}), 500
 
 
-def export_docx(clauses, contract_type, parties):
-    """Generate a professional Word document of the reviewed contract."""
-    try:
-        from docx import Document
-        from docx.shared import Pt, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-    except ImportError:
-        return jsonify({"error": "Word export not available on this server. Use PDF instead."}), 500
+def normalize_whitespace(text):
+    """Normalize whitespace for fuzzy matching."""
+    return re.sub(r'\s+', ' ', text.strip())
 
-    try:
-        doc = Document()
 
-        title = doc.add_heading(contract_type.upper(), level=0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+def export_modified_docx(file_bytes, edits, filename):
+    """Modify the original DOCX in-place, preserving formatting."""
+    from docx import Document
 
-        if parties:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(f'Parties: {" and ".join(parties)}')
-            run.font.size = Pt(11)
+    doc = Document(io.BytesIO(file_bytes))
 
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run('Reviewed and revised by ClauseGuard AI')
-        run.font.size = Pt(9)
-        run.font.italic = True
-        run.font.color.rgb = RGBColor(128, 128, 128)
+    for edit in edits:
+        old_text = edit.get('old_text', '')
+        new_text = edit.get('new_text', '')
+        if not old_text or not new_text or old_text == new_text:
+            continue
 
-        doc.add_paragraph('_' * 80)
+        old_normalized = normalize_whitespace(old_text)
 
-        for clause in clauses:
-            title_text = clause.get('title', 'Untitled Clause')
-            text = clause.get('original_text', '')
-            risk = clause.get('risk_level', 'LOW')
+        # Search through paragraphs for matching text
+        for paragraph in doc.paragraphs:
+            para_text = normalize_whitespace(paragraph.text)
+            if old_normalized in para_text or para_text in old_normalized:
+                # Replace text while preserving formatting of the first run
+                if paragraph.runs:
+                    # Keep first run's formatting, put all new text there
+                    paragraph.runs[0].text = new_text
+                    # Clear remaining runs
+                    for run in paragraph.runs[1:]:
+                        run.text = ""
+                else:
+                    paragraph.text = new_text
 
-            h = doc.add_heading(level=2)
-            h.add_run(title_text)
-            if risk == 'HIGH':
-                risk_run = h.add_run('  [HIGH RISK]')
-                risk_run.font.color.rgb = RGBColor(255, 71, 87)
-                risk_run.font.size = Pt(10)
-            elif risk == 'MEDIUM':
-                risk_run = h.add_run('  [MEDIUM RISK]')
-                risk_run.font.color.rgb = RGBColor(255, 165, 2)
-                risk_run.font.size = Pt(10)
+        # Also check tables
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        para_text = normalize_whitespace(paragraph.text)
+                        if old_normalized in para_text or para_text in old_normalized:
+                            if paragraph.runs:
+                                paragraph.runs[0].text = new_text
+                                for run in paragraph.runs[1:]:
+                                    run.text = ""
+                            else:
+                                paragraph.text = new_text
 
-            p = doc.add_paragraph(text)
-            p.style.font.size = Pt(11)
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
 
-        doc.add_paragraph('_' * 80)
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run('This document was reviewed using ClauseGuard AI. It does not constitute legal advice.')
-        run.font.size = Pt(9)
-        run.font.italic = True
-        run.font.color.rgb = RGBColor(128, 128, 128)
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                     as_attachment=True,
+                     download_name=filename)
 
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
 
-        return send_file(buf,
-                         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                         as_attachment=True,
-                         download_name='clauseguard-reviewed-contract.docx')
-    except Exception as e:
-        return jsonify({"error": f"Word export failed: {str(e)}"}), 500
+def export_modified_pdf(file_bytes, edits, filename):
+    """Modify the original PDF in-place using PyMuPDF, preserving layout."""
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+
+    for edit in edits:
+        old_text = edit.get('old_text', '')
+        new_text = edit.get('new_text', '')
+        if not old_text or not new_text or old_text == new_text:
+            continue
+
+        # Search for the old text across all pages
+        # Try with first 80 chars for matching (PDF text extraction can vary)
+        search_snippet = old_text[:80].strip()
+
+        for page in doc:
+            text_instances = page.search_for(search_snippet)
+            if not text_instances:
+                # Try with normalized shorter snippet
+                words = old_text.split()[:10]
+                search_snippet = ' '.join(words)
+                text_instances = page.search_for(search_snippet)
+
+            if text_instances:
+                # Found the text on this page - do a redact and re-insert
+                # Get the full area of the old text
+                # Find all instances of the old text to get the full bounding area
+                full_text = page.get_text()
+                old_normalized = normalize_whitespace(old_text)
+                full_normalized = normalize_whitespace(full_text)
+
+                if old_normalized in full_normalized:
+                    # Use the first match rect as anchor
+                    first_rect = text_instances[0]
+
+                    # Get font info from the area
+                    blocks = page.get_text("dict", clip=first_rect)["blocks"]
+                    font_size = 11
+                    font_name = "helv"
+                    text_color = (0, 0, 0)
+
+                    if blocks:
+                        for block in blocks:
+                            for line in block.get("lines", []):
+                                for span in line.get("spans", []):
+                                    font_size = span.get("size", 11)
+                                    font_name = "helv"  # Use standard font for replacement
+                                    color_int = span.get("color", 0)
+                                    r = ((color_int >> 16) & 0xFF) / 255
+                                    g = ((color_int >> 8) & 0xFF) / 255
+                                    b = (color_int & 0xFF) / 255
+                                    text_color = (r, g, b)
+                                    break
+                                break
+                            break
+
+                    # Find the full area covered by the old text
+                    all_rects = page.search_for(old_text[:200])
+                    if not all_rects:
+                        all_rects = text_instances
+
+                    # Create a combined rect covering all matches
+                    combined = all_rects[0]
+                    for r in all_rects[1:]:
+                        combined = combined | r
+
+                    # Expand rect to cover the full paragraph width
+                    page_rect = page.rect
+                    combined.x0 = page_rect.x0 + 40  # left margin
+                    combined.x1 = page_rect.x1 - 40  # right margin
+
+                    # Redact (white out) the old text area
+                    page.add_redact_annot(combined, fill=(1, 1, 1))
+                    page.apply_redactions()
+
+                    # Insert the new text at the same position
+                    text_rect = fitz.Rect(combined.x0, combined.y0,
+                                          combined.x1, combined.y0 + combined.height + 20)
+                    page.insert_textbox(text_rect, new_text,
+                                        fontsize=font_size,
+                                        fontname=font_name,
+                                        color=text_color,
+                                        align=fitz.TEXT_ALIGN_LEFT)
+                break  # Only process first page where text is found
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    doc.close()
+
+    return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                     download_name=filename)
+
+
+def export_modified_txt(file_bytes, edits, filename):
+    """Modify plain text file with find-and-replace."""
+    text = file_bytes.decode('utf-8')
+
+    for edit in edits:
+        old_text = edit.get('old_text', '')
+        new_text = edit.get('new_text', '')
+        if old_text and new_text and old_text != new_text:
+            text = text.replace(old_text, new_text)
+
+    buf = io.BytesIO(text.encode('utf-8'))
+    return send_file(buf, mimetype='text/plain', as_attachment=True, download_name=filename)
+
+
+@app.route('/api/file-type', methods=['GET'])
+def get_file_type():
+    """Get the type of the original uploaded file."""
+    sid = get_session_id()
+    original = uploaded_files.get(sid)
+    if not original:
+        return jsonify({"type": "none"})
+    return jsonify({"type": original['type'], "filename": original['filename']})
 
 
 @app.route('/health')
