@@ -303,11 +303,74 @@ def normalize_whitespace(text):
     return re.sub(r'\s+', ' ', text.strip())
 
 
+def has_cjk(text):
+    """Check if text contains Chinese/Japanese/Korean characters."""
+    return bool(re.search(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', text))
+
+
+def find_best_match_paragraphs(paragraphs, old_text):
+    """Find paragraphs that contain the old text, handling multi-paragraph clauses.
+    Returns list of (index, paragraph) tuples."""
+    old_normalized = normalize_whitespace(old_text)
+    matches = []
+
+    # First try: exact single paragraph match
+    for i, para in enumerate(paragraphs):
+        para_text = normalize_whitespace(para.text)
+        if para_text and para_text == old_normalized:
+            return [(i, para)]
+
+    # Second try: paragraph text is a substantial substring of old_text
+    for i, para in enumerate(paragraphs):
+        para_text = normalize_whitespace(para.text)
+        if para_text and len(para_text) > 20 and para_text in old_normalized:
+            matches.append((i, para))
+
+    # Third try: old_text is substring of paragraph
+    if not matches:
+        for i, para in enumerate(paragraphs):
+            para_text = normalize_whitespace(para.text)
+            if para_text and len(para_text) > 20 and old_normalized in para_text:
+                matches.append((i, para))
+
+    # Fourth try: first 50 chars match
+    if not matches:
+        old_start = old_normalized[:50]
+        for i, para in enumerate(paragraphs):
+            para_text = normalize_whitespace(para.text)
+            if para_text and old_start in para_text:
+                matches.append((i, para))
+
+    return matches
+
+
+def replace_paragraph_text(paragraph, new_text):
+    """Replace paragraph text while preserving the formatting of existing runs."""
+    if not paragraph.runs:
+        paragraph.text = new_text
+        return
+
+    # Preserve the formatting (font, size, bold, italic, color) from the first run
+    first_run = paragraph.runs[0]
+    first_run.text = new_text
+
+    # Clear all other runs (keep XML elements but empty text)
+    for run in paragraph.runs[1:]:
+        run.text = ""
+
+
 def export_modified_docx(file_bytes, edits, filename):
     """Modify the original DOCX in-place, preserving formatting."""
     from docx import Document
 
     doc = Document(io.BytesIO(file_bytes))
+
+    # Collect all paragraphs including those in tables
+    all_paragraphs = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                all_paragraphs.extend(cell.paragraphs)
 
     for edit in edits:
         old_text = edit.get('old_text', '')
@@ -315,35 +378,19 @@ def export_modified_docx(file_bytes, edits, filename):
         if not old_text or not new_text or old_text == new_text:
             continue
 
-        old_normalized = normalize_whitespace(old_text)
+        matches = find_best_match_paragraphs(all_paragraphs, old_text)
 
-        # Search through paragraphs for matching text
-        for paragraph in doc.paragraphs:
-            para_text = normalize_whitespace(paragraph.text)
-            if old_normalized in para_text or para_text in old_normalized:
-                # Replace text while preserving formatting of the first run
-                if paragraph.runs:
-                    # Keep first run's formatting, put all new text there
-                    paragraph.runs[0].text = new_text
-                    # Clear remaining runs
-                    for run in paragraph.runs[1:]:
-                        run.text = ""
-                else:
-                    paragraph.text = new_text
-
-        # Also check tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        para_text = normalize_whitespace(paragraph.text)
-                        if old_normalized in para_text or para_text in old_normalized:
-                            if paragraph.runs:
-                                paragraph.runs[0].text = new_text
-                                for run in paragraph.runs[1:]:
-                                    run.text = ""
-                            else:
-                                paragraph.text = new_text
+        if len(matches) == 1:
+            # Single paragraph match — replace its text
+            _, para = matches[0]
+            replace_paragraph_text(para, new_text)
+        elif len(matches) > 1:
+            # Multiple paragraphs matched (clause spans multiple paragraphs)
+            # Put all new text in the first matched paragraph, clear the rest
+            _, first_para = matches[0]
+            replace_paragraph_text(first_para, new_text)
+            for _, para in matches[1:]:
+                replace_paragraph_text(para, "")
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -367,79 +414,71 @@ def export_modified_pdf(file_bytes, edits, filename):
         if not old_text or not new_text or old_text == new_text:
             continue
 
-        # Search for the old text across all pages
-        # Try with first 80 chars for matching (PDF text extraction can vary)
-        search_snippet = old_text[:80].strip()
+        # Try multiple search snippets for robustness
+        search_attempts = [
+            old_text[:80].strip(),
+            ' '.join(old_text.split()[:10]),
+            ' '.join(old_text.split()[:5]),
+        ]
 
         for page in doc:
-            text_instances = page.search_for(search_snippet)
+            text_instances = None
+            for snippet in search_attempts:
+                text_instances = page.search_for(snippet)
+                if text_instances:
+                    break
+
             if not text_instances:
-                # Try with normalized shorter snippet
-                words = old_text.split()[:10]
-                search_snippet = ' '.join(words)
-                text_instances = page.search_for(search_snippet)
+                continue
 
-            if text_instances:
-                # Found the text on this page - do a redact and re-insert
-                # Get the full area of the old text
-                # Find all instances of the old text to get the full bounding area
-                full_text = page.get_text()
-                old_normalized = normalize_whitespace(old_text)
-                full_normalized = normalize_whitespace(full_text)
+            # Get font info from the matched area
+            first_rect = text_instances[0]
+            blocks = page.get_text("dict", clip=first_rect).get("blocks", [])
+            font_size = 11
+            font_name = "helv"
+            text_color = (0, 0, 0)
 
-                if old_normalized in full_normalized:
-                    # Use the first match rect as anchor
-                    first_rect = text_instances[0]
+            for block in blocks:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        font_size = span.get("size", 11)
+                        color_int = span.get("color", 0)
+                        r = ((color_int >> 16) & 0xFF) / 255
+                        g = ((color_int >> 8) & 0xFF) / 255
+                        b = (color_int & 0xFF) / 255
+                        text_color = (r, g, b)
+                        break
+                    break
+                break
 
-                    # Get font info from the area
-                    blocks = page.get_text("dict", clip=first_rect)["blocks"]
-                    font_size = 11
-                    font_name = "helv"
-                    text_color = (0, 0, 0)
+            # Build the combined area of all matched text rects
+            combined = text_instances[0]
+            for r in text_instances[1:]:
+                combined = combined | r
 
-                    if blocks:
-                        for block in blocks:
-                            for line in block.get("lines", []):
-                                for span in line.get("spans", []):
-                                    font_size = span.get("size", 11)
-                                    font_name = "helv"  # Use standard font for replacement
-                                    color_int = span.get("color", 0)
-                                    r = ((color_int >> 16) & 0xFF) / 255
-                                    g = ((color_int >> 8) & 0xFF) / 255
-                                    b = (color_int & 0xFF) / 255
-                                    text_color = (r, g, b)
-                                    break
-                                break
-                            break
+            # Use page margins from the first rect position
+            page_rect = page.rect
+            combined.x0 = max(page_rect.x0 + 20, combined.x0 - 10)
+            combined.x1 = min(page_rect.x1 - 20, combined.x1 + 10)
 
-                    # Find the full area covered by the old text
-                    all_rects = page.search_for(old_text[:200])
-                    if not all_rects:
-                        all_rects = text_instances
+            # Redact (white out) the old text
+            page.add_redact_annot(combined, fill=(1, 1, 1))
+            page.apply_redactions()
 
-                    # Create a combined rect covering all matches
-                    combined = all_rects[0]
-                    for r in all_rects[1:]:
-                        combined = combined | r
+            # Choose font: use CJK font for Chinese text
+            if has_cjk(new_text):
+                font_name = "china-ss"  # PyMuPDF built-in Simplified Chinese font
 
-                    # Expand rect to cover the full paragraph width
-                    page_rect = page.rect
-                    combined.x0 = page_rect.x0 + 40  # left margin
-                    combined.x1 = page_rect.x1 - 40  # right margin
-
-                    # Redact (white out) the old text area
-                    page.add_redact_annot(combined, fill=(1, 1, 1))
-                    page.apply_redactions()
-
-                    # Insert the new text at the same position
-                    text_rect = fitz.Rect(combined.x0, combined.y0,
-                                          combined.x1, combined.y0 + combined.height + 20)
-                    page.insert_textbox(text_rect, new_text,
-                                        fontsize=font_size,
-                                        fontname=font_name,
-                                        color=text_color,
-                                        align=fitz.TEXT_ALIGN_LEFT)
-                break  # Only process first page where text is found
+            # Insert new text at the same position with extra height for reflow
+            extra_height = max(20, (len(new_text) // 40) * font_size)
+            text_rect = fitz.Rect(combined.x0, combined.y0,
+                                  combined.x1, combined.y1 + extra_height)
+            page.insert_textbox(text_rect, new_text,
+                                fontsize=font_size,
+                                fontname=font_name,
+                                color=text_color,
+                                align=fitz.TEXT_ALIGN_LEFT)
+            break  # Only process first page where text is found
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -458,7 +497,15 @@ def export_modified_txt(file_bytes, edits, filename):
         old_text = edit.get('old_text', '')
         new_text = edit.get('new_text', '')
         if old_text and new_text and old_text != new_text:
-            text = text.replace(old_text, new_text)
+            # Try exact match first, then normalized match
+            if old_text in text:
+                text = text.replace(old_text, new_text)
+            else:
+                # Fuzzy: normalize whitespace and try again
+                old_norm = normalize_whitespace(old_text)
+                text_norm = normalize_whitespace(text)
+                if old_norm in text_norm:
+                    text = text.replace(old_norm, new_text)
 
     buf = io.BytesIO(text.encode('utf-8'))
     return send_file(buf, mimetype='text/plain', as_attachment=True, download_name=filename)
