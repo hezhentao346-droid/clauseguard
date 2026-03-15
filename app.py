@@ -31,8 +31,9 @@ if GROQ_API_KEY:
 # In-memory storage for contract history (use database in production)
 contract_history = {}
 
-# In-memory storage for original uploaded files (keyed by session ID)
-uploaded_files = {}
+# Temp directory for storing original uploaded files
+UPLOAD_TEMP_DIR = os.path.join(tempfile.gettempdir(), 'clauseguard_uploads')
+os.makedirs(UPLOAD_TEMP_DIR, exist_ok=True)
 
 LANG_INSTRUCTION = {
     'zh': '\n\nIMPORTANT: You MUST respond with all text fields (risk_explanation, suggested_revision, revision_rationale, executive_summary, negotiation_tips, legal_notes, risk_change, enforceability_notes, legal_reference) in Chinese (Simplified). Keep JSON keys, risk levels (HIGH/MEDIUM/LOW), and party names in English. The original_text should remain as-is from the contract.',
@@ -106,6 +107,31 @@ def get_session_id():
     return session['session_id']
 
 
+def save_uploaded_file(sid, file_bytes, filename, file_type):
+    """Save uploaded file to disk for later export."""
+    # Save file bytes
+    file_path = os.path.join(UPLOAD_TEMP_DIR, f"{sid}.dat")
+    with open(file_path, 'wb') as f:
+        f.write(file_bytes)
+    # Save metadata
+    meta_path = os.path.join(UPLOAD_TEMP_DIR, f"{sid}.json")
+    with open(meta_path, 'w') as f:
+        json.dump({'filename': filename, 'type': file_type}, f)
+
+
+def load_uploaded_file(sid):
+    """Load uploaded file from disk. Returns (file_bytes, filename, file_type) or None."""
+    file_path = os.path.join(UPLOAD_TEMP_DIR, f"{sid}.dat")
+    meta_path = os.path.join(UPLOAD_TEMP_DIR, f"{sid}.json")
+    if not os.path.exists(file_path) or not os.path.exists(meta_path):
+        return None
+    with open(file_path, 'rb') as f:
+        file_bytes = f.read()
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+    return file_bytes, meta['filename'], meta['type']
+
+
 # ============ ROUTES ============
 
 @app.route('/')
@@ -127,12 +153,9 @@ def analyze_contract():
         filename_lower = orig_filename.lower()
         file_bytes = uploaded_file.read()
 
-        # Store original file for later export
-        uploaded_files[sid] = {
-            'bytes': file_bytes,
-            'filename': orig_filename,
-            'type': 'pdf' if filename_lower.endswith('.pdf') else 'docx' if filename_lower.endswith('.docx') else 'txt'
-        }
+        # Store original file to disk for later export
+        file_type = 'pdf' if filename_lower.endswith('.pdf') else 'docx' if filename_lower.endswith('.docx') else 'txt'
+        save_uploaded_file(sid, file_bytes, orig_filename, file_type)
 
         # Extract text from the stored bytes
         contract_text = extract_text_from_bytes(file_bytes, orig_filename)
@@ -141,11 +164,7 @@ def analyze_contract():
         contract_text = request.json['text']
         lang = request.json.get('lang', 'en')
         # Store as txt for pasted text
-        uploaded_files[sid] = {
-            'bytes': contract_text.encode('utf-8'),
-            'filename': 'contract.txt',
-            'type': 'txt'
-        }
+        save_uploaded_file(sid, contract_text.encode('utf-8'), 'contract.txt', 'txt')
     else:
         return jsonify({"error": "No contract text provided"}), 400
 
@@ -266,14 +285,12 @@ def export_contract():
     edits = data.get('edits', [])  # [{old_text, new_text}, ...]
 
     sid = get_session_id()
-    original = uploaded_files.get(sid)
+    result = load_uploaded_file(sid)
 
-    if not original:
+    if not result:
         return jsonify({"error": "No original file found. Please re-upload and analyze first."}), 400
 
-    file_type = original['type']
-    file_bytes = original['bytes']
-    filename = original['filename']
+    file_bytes, filename, file_type = result
 
     # If no edits, return the original file as-is
     if not edits:
@@ -515,10 +532,11 @@ def export_modified_txt(file_bytes, edits, filename):
 def get_file_type():
     """Get the type of the original uploaded file."""
     sid = get_session_id()
-    original = uploaded_files.get(sid)
-    if not original:
+    result = load_uploaded_file(sid)
+    if not result:
         return jsonify({"type": "none"})
-    return jsonify({"type": original['type'], "filename": original['filename']})
+    _, fname, ftype = result
+    return jsonify({"type": ftype, "filename": fname})
 
 
 @app.route('/health')
