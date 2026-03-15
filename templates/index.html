@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClauseGuard - AI Contract Risk Analysis</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242836;
+    --border: #2e3347;
+    --text: #e4e6f0;
+    --text-muted: #8b8fa3;
+    --primary: #6c5ce7;
+    --primary-hover: #7c6ef7;
+    --high: #ff4757;
+    --high-bg: rgba(255,71,87,0.12);
+    --medium: #ffa502;
+    --medium-bg: rgba(255,165,2,0.12);
+    --low: #2ed573;
+    --low-bg: rgba(46,213,115,0.12);
+    --accent: #00d2d3;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--primary);
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: var(--primary);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 18px;
+  }
+
+  .api-status {
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+
+  .api-status.connected { border-color: var(--low); color: var(--low); }
+  .api-status.disconnected { border-color: var(--high); color: var(--high); }
+
+  /* Layout */
+  .app {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    height: calc(100vh - 65px);
+  }
+
+  /* Upload Screen */
+  .upload-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 40px;
+    grid-column: 1 / -1;
+  }
+
+  .upload-screen h1 {
+    font-size: 32px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .upload-screen p { color: var(--text-muted); font-size: 16px; max-width: 500px; text-align: center; }
+
+  .upload-methods {
+    display: flex;
+    gap: 24px;
+    margin-top: 16px;
+    width: 100%;
+    max-width: 800px;
+  }
+
+  .upload-box, .paste-box {
+    flex: 1;
+    background: var(--surface);
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .upload-box:hover, .paste-box:hover {
+    border-color: var(--primary);
+    background: var(--surface2);
+  }
+
+  .upload-box h3, .paste-box h3 { margin-bottom: 8px; font-size: 18px; }
+  .upload-box p, .paste-box p { color: var(--text-muted); font-size: 13px; }
+
+  .upload-icon { font-size: 48px; margin-bottom: 12px; display: block; }
+
+  #file-input { display: none; }
+
+  .paste-textarea {
+    width: 100%;
+    min-height: 200px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 16px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    margin-top: 12px;
+    display: none;
+  }
+
+  .paste-textarea:focus { outline: none; border-color: var(--primary); }
+
+  .btn {
+    padding: 12px 28px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+
+  .btn-sm { padding: 6px 14px; font-size: 13px; border-radius: 6px; }
+
+  .analyze-btn {
+    margin-top: 12px;
+    display: none;
+  }
+
+  /* Sample contract button */
+  .sample-btn {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-decoration: underline;
+    cursor: pointer;
+    background: none;
+    border: none;
+  }
+
+  .sample-btn:hover { color: var(--primary); }
+
+  /* Editor Panel */
+  .editor-panel {
+    display: none;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .editor-toolbar h3 { font-size: 14px; font-weight: 600; }
+
+  .contract-editor {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+    line-height: 1.8;
+    font-size: 14px;
+  }
+
+  .contract-editor:focus { outline: none; }
+
+  /* Clause highlighting */
+  .clause {
+    position: relative;
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-radius: 6px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .clause:hover { background: var(--surface2); }
+
+  .clause.risk-high {
+    background: var(--high-bg);
+    border-left-color: var(--high);
+  }
+
+  .clause.risk-medium {
+    background: var(--medium-bg);
+    border-left-color: var(--medium);
+  }
+
+  .clause.risk-low {
+    background: var(--low-bg);
+    border-left-color: var(--low);
+  }
+
+  .clause.active {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .clause-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .badge-high { background: var(--high); color: white; }
+  .badge-medium { background: var(--medium); color: #1a1d27; }
+  .badge-low { background: var(--low); color: #1a1d27; }
+
+  /* Risk Panel */
+  .risk-panel {
+    display: none;
+    flex-direction: column;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .risk-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .risk-score {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  .score-circle {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; font-weight: 800;
+    border: 3px solid;
+  }
+
+  .score-high { border-color: var(--high); color: var(--high); background: var(--high-bg); }
+  .score-medium { border-color: var(--medium); color: var(--medium); background: var(--medium-bg); }
+  .score-low { border-color: var(--low); color: var(--low); background: var(--low-bg); }
+
+  .score-label { font-size: 13px; color: var(--text-muted); }
+  .score-type { font-size: 15px; font-weight: 600; }
+
+  .risk-summary {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  .risk-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .risk-tab {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  .risk-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  .risk-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  /* Clause detail card */
+  .clause-card {
+    background: var(--surface2);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid var(--border);
+  }
+
+  .clause-card:hover { border-color: var(--primary); }
+  .clause-card.active { border-color: var(--primary); background: rgba(108,92,231,0.1); }
+
+  .clause-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .clause-card-title { font-size: 14px; font-weight: 600; }
+
+  .clause-card-body { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+  .clause-card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  /* Revision diff */
+  .revision-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .revision-box .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .revision-box del { color: var(--high); text-decoration: line-through; opacity: 0.7; }
+  .revision-box ins { color: var(--low); text-decoration: none; font-weight: 600; }
+
+  /* Edit modal */
+  .edit-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .edit-modal.show { display: flex; }
+
+  .edit-modal-content {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 28px;
+    width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+  }
+
+  .edit-modal-content h3 { margin-bottom: 16px; }
+
+  .edit-input {
+    width: 100%;
+    min-height: 120px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    margin-bottom: 12px;
+  }
+
+  .edit-input:focus { outline: none; border-color: var(--primary); }
+
+  .edit-intent {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 12px;
+    font-size: 14px;
+    font-family: inherit;
+    margin-bottom: 16px;
+  }
+
+  .edit-intent:focus { outline: none; border-color: var(--primary); }
+
+  .edit-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+  .ai-suggestion {
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px;
+    margin-top: 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    display: none;
+  }
+
+  .ai-suggestion .label { color: var(--accent); font-weight: 700; font-size: 11px; text-transform: uppercase; margin-bottom: 6px; }
+
+  /* Missing clause card */
+  .missing-card {
+    background: var(--surface2);
+    border: 1px dashed var(--medium);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .missing-card .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--medium);
+    margin-bottom: 6px;
+  }
+
+  /* Negotiation tips */
+  .tip-item {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    border-left: 3px solid var(--accent);
+  }
+
+  /* Loading */
+  .loading {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 60px;
+    grid-column: 1 / -1;
+  }
+
+  .loading.show { display: flex; }
+
+  .spinner {
+    width: 48px; height: 48px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text { font-size: 15px; color: var(--text-muted); }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    gap: 16px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .stat-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+
+  .stat-dot.high { background: var(--high); }
+  .stat-dot.medium { background: var(--medium); }
+  .stat-dot.low { background: var(--low); }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .risk-panel { height: 50vh; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">C</div>
+    ClauseGuard
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button class="btn btn-outline btn-sm" id="lang-toggle" onclick="toggleLang()" style="font-size:13px;">EN / CN</button>
+    <div class="api-status {{ 'connected' if has_api_key else 'disconnected' }}" id="api-status">
+      {{ 'Groq AI Connected' if has_api_key else 'API Key Required' }}
+    </div>
+  </div>
+</div>
+
+<!-- Upload Screen -->
+<div class="upload-screen" id="upload-screen">
+  <h1 data-i18n="hero_title">Analyze Contract Risks Instantly</h1>
+  <p data-i18n="hero_desc">Upload or paste your business contract. ClauseGuard AI will identify risks, suggest revisions, and flag missing protections.</p>
+
+  <div class="upload-methods">
+    <div class="upload-box" onclick="document.getElementById('file-input').click()">
+      <span class="upload-icon">+</span>
+      <h3 data-i18n="upload_title">Upload Contract</h3>
+      <p data-i18n="upload_desc">PDF, DOCX, or TXT</p>
+      <input type="file" id="file-input" accept=".pdf,.docx,.txt" onchange="handleFileUpload(this)">
+    </div>
+
+    <div class="paste-box" id="paste-box" onclick="togglePaste()">
+      <span class="upload-icon">#</span>
+      <h3 data-i18n="paste_title">Paste Contract Text</h3>
+      <p data-i18n="paste_desc">Copy and paste your contract directly</p>
+      <textarea class="paste-textarea" id="paste-textarea" onclick="event.stopPropagation()" data-i18n-placeholder="paste_placeholder" placeholder="Paste your contract text here..."></textarea>
+    </div>
+  </div>
+
+  <button class="btn btn-primary analyze-btn" id="analyze-btn" onclick="analyzeContract()" data-i18n="analyze_btn">Analyze Contract</button>
+  <button class="sample-btn" onclick="loadSample()" data-i18n="sample_btn">Or try with a sample NDA</button>
+</div>
+
+<!-- Loading -->
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text" data-i18n="loading_text">ClauseGuard AI is analyzing your contract...</div>
+  <div class="loading-text" style="font-size: 12px; color: var(--text-muted);" data-i18n="loading_sub">Reviewing clauses, assessing risks, generating suggestions</div>
+</div>
+
+<!-- Main App -->
+<div class="app" id="main-app" style="display: none;">
+  <!-- Editor -->
+  <div class="editor-panel" id="editor-panel">
+    <div class="editor-toolbar">
+      <h3 data-i18n="editor_title">Contract Editor</h3>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline btn-sm" onclick="resetApp()" data-i18n="new_contract">New Contract</button>
+        <button class="btn btn-outline btn-sm" onclick="exportAs('pdf')" data-i18n="export_pdf">Export PDF</button>
+        <button class="btn btn-outline btn-sm" onclick="exportAs('docx')" data-i18n="export_word">Export Word</button>
+      </div>
+    </div>
+    <div class="stats-bar" id="stats-bar"></div>
+    <div class="contract-editor" id="contract-editor"></div>
+  </div>
+
+  <!-- Risk Panel -->
+  <div class="risk-panel" id="risk-panel">
+    <div class="risk-header" id="risk-header"></div>
+    <div class="risk-tabs">
+      <button class="risk-tab active" onclick="switchTab('clauses', this)" data-i18n="tab_clauses">Clauses</button>
+      <button class="risk-tab" onclick="switchTab('missing', this)" data-i18n="tab_missing">Missing</button>
+      <button class="risk-tab" onclick="switchTab('tips', this)" data-i18n="tab_strategy">Strategy</button>
+    </div>
+    <div class="risk-content" id="risk-content"></div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="edit-modal" id="edit-modal">
+  <div class="edit-modal-content">
+    <h3 data-i18n="edit_title">Edit Clause</h3>
+    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px;" data-i18n="edit_current">Current text:</label>
+    <textarea class="edit-input" id="edit-clause-text"></textarea>
+    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px;" data-i18n="edit_intent_label">What would you like to change? (optional - for AI suggestion)</label>
+    <input class="edit-intent" id="edit-intent" data-i18n-placeholder="edit_intent_ph" placeholder="e.g., Make the termination notice period 60 days instead of 30">
+    <div class="edit-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeEditModal()" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-outline btn-sm" onclick="getAiSuggestion()" id="ai-suggest-btn" data-i18n="ai_suggest">AI Suggest</button>
+      <button class="btn btn-primary btn-sm" onclick="applyEdit()" data-i18n="apply_changes">Apply Changes</button>
+    </div>
+    <div class="ai-suggestion" id="ai-suggestion">
+      <div class="label" data-i18n="ai_suggestion_label">AI Suggestion</div>
+      <div id="ai-suggestion-text"></div>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="applySuggestion()" data-i18n="use_suggestion">Use This Suggestion</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let analysisData = null;
+let currentClauseId = null;
+let contractText = "";
+let contractType = "";
+let currentLang = "en";
+
+// ===== i18n Translations =====
+const i18n = {
+  en: {
+    hero_title: "Analyze Contract Risks Instantly",
+    hero_desc: "Upload or paste your business contract. ClauseGuard AI will identify risks, suggest revisions, and flag missing protections.",
+    upload_title: "Upload Contract",
+    upload_desc: "PDF, DOCX, or TXT",
+    paste_title: "Paste Contract Text",
+    paste_desc: "Copy and paste your contract directly",
+    paste_placeholder: "Paste your contract text here...",
+    analyze_btn: "Analyze Contract",
+    sample_btn: "Or try with a sample NDA",
+    loading_text: "ClauseGuard AI is analyzing your contract...",
+    loading_sub: "Reviewing clauses, assessing risks, generating suggestions",
+    editor_title: "Contract Editor",
+    new_contract: "New Contract",
+    export_pdf: "Export PDF",
+    export_word: "Export Word",
+    tab_clauses: "Clauses",
+    tab_missing: "Missing",
+    tab_strategy: "Strategy",
+    edit_title: "Edit Clause",
+    edit_current: "Current text:",
+    edit_intent_label: "What would you like to change? (optional - for AI suggestion)",
+    edit_intent_ph: "e.g., Make the termination notice period 60 days instead of 30",
+    cancel: "Cancel",
+    ai_suggest: "AI Suggest",
+    apply_changes: "Apply Changes",
+    ai_suggestion_label: "AI Suggestion",
+    use_suggestion: "Use This Suggestion",
+    high_risk: "High Risk",
+    medium_risk: "Medium Risk",
+    low_risk: "Low Risk",
+    clauses_analyzed: "clauses analyzed",
+    risk_score_label: "Risk Score (1-10)",
+    edit_clause: "Edit Clause",
+    accept_suggestion: "Accept Suggestion",
+    suggested_revision: "Suggested Revision",
+    missing_label: "Missing",
+    suggested_addition: "Suggested Addition",
+    add_to_contract: "Add to Contract",
+    no_missing: "No missing clauses detected.",
+    no_tips: "No tips available.",
+    revised_label: "Revised:",
+    note_label: "Note:",
+    thinking: "Thinking...",
+    api_connected: "Groq AI Connected",
+    api_required: "API Key Required"
+  },
+  zh: {
+    hero_title: "即时分析合同风险",
+    hero_desc: "上传或粘贴您的商业合同。ClauseGuard AI 将识别风险、建议修改并标记缺失的保护条款。",
+    upload_title: "上传合同",
+    upload_desc: "支持 PDF、DOCX 或 TXT",
+    paste_title: "粘贴合同文本",
+    paste_desc: "直接复制粘贴您的合同",
+    paste_placeholder: "在此粘贴您的合同文本...",
+    analyze_btn: "分析合同",
+    sample_btn: "或试用示例保密协议",
+    loading_text: "ClauseGuard AI 正在分析您的合同...",
+    loading_sub: "审查条款、评估风险、生成建议",
+    editor_title: "合同编辑器",
+    new_contract: "新合同",
+    export_pdf: "导出 PDF",
+    export_word: "导出 Word",
+    tab_clauses: "条款",
+    tab_missing: "缺失条款",
+    tab_strategy: "谈判策略",
+    edit_title: "编辑条款",
+    edit_current: "当前文本：",
+    edit_intent_label: "您想如何修改？（可选 - 用于AI建议）",
+    edit_intent_ph: "例如：将终止通知期从30天改为60天",
+    cancel: "取消",
+    ai_suggest: "AI 建议",
+    apply_changes: "应用修改",
+    ai_suggestion_label: "AI 建议",
+    use_suggestion: "采用此建议",
+    high_risk: "高风险",
+    medium_risk: "中风险",
+    low_risk: "低风险",
+    clauses_analyzed: "条款已分析",
+    risk_score_label: "风险评分 (1-10)",
+    edit_clause: "编辑条款",
+    accept_suggestion: "采纳建议",
+    suggested_revision: "建议修改",
+    missing_label: "缺失",
+    suggested_addition: "建议添加",
+    add_to_contract: "添加到合同",
+    no_missing: "未检测到缺失条款。",
+    no_tips: "暂无策略建议。",
+    revised_label: "修改后：",
+    note_label: "说明：",
+    thinking: "思考中...",
+    api_connected: "Groq AI 已连接",
+    api_required: "需要 API 密钥"
+  }
+};
+
+function t(key) {
+  return i18n[currentLang][key] || i18n['en'][key] || key;
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'en' ? 'zh' : 'en';
+  document.getElementById('lang-toggle').textContent = currentLang === 'en' ? 'EN / CN' : 'CN / EN';
+  applyTranslations();
+  // Re-render dynamic content if analysis is loaded
+  if (analysisData) {
+    renderAnalysis(analysisData);
+  }
+}
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (i18n[currentLang][key]) {
+      el.textContent = i18n[currentLang][key];
+    }
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    if (i18n[currentLang][key]) {
+      el.placeholder = i18n[currentLang][key];
+    }
+  });
+}
+
+// Toggle paste textarea
+function togglePaste() {
+  const ta = document.getElementById('paste-textarea');
+  const btn = document.getElementById('analyze-btn');
+  if (ta.style.display === 'none' || ta.style.display === '') {
+    ta.style.display = 'block';
+    btn.style.display = 'inline-block';
+    ta.focus();
+  }
+}
+
+// Handle file upload
+function handleFileUpload(input) {
+  if (input.files.length > 0) {
+    document.getElementById('analyze-btn').style.display = 'inline-block';
+    document.querySelector('.upload-box h3').textContent = input.files[0].name;
+    document.querySelector('.upload-box p').textContent = 'Ready to analyze';
+  }
+}
+
+// Sample NDA
+function loadSample() {
+  const sample = `MUTUAL NON-DISCLOSURE AGREEMENT
+
+This Mutual Non-Disclosure Agreement ("Agreement") is entered into as of March 15, 2026, by and between TechCorp Inc., a Delaware corporation ("Disclosing Party"), and StartupXYZ LLC, a California limited liability company ("Receiving Party").
+
+1. DEFINITION OF CONFIDENTIAL INFORMATION
+"Confidential Information" means any and all information, whether written, oral, electronic, or visual, disclosed by either party, including but not limited to: trade secrets, business plans, financial data, customer lists, technical specifications, source code, algorithms, marketing strategies, and any other proprietary information.
+
+2. OBLIGATIONS OF RECEIVING PARTY
+The Receiving Party shall: (a) hold all Confidential Information in strict confidence; (b) not disclose Confidential Information to any third party without prior written consent; (c) use Confidential Information solely for the purpose of evaluating a potential business relationship; (d) take all reasonable measures to protect the secrecy of the Confidential Information, but in no event less than the measures it takes to protect its own confidential information.
+
+3. TERM AND DURATION
+This Agreement shall remain in effect for a period of five (5) years from the date of execution. The obligations of confidentiality shall survive termination and continue in perpetuity with respect to trade secrets and for a period of ten (10) years for all other Confidential Information.
+
+4. INDEMNIFICATION
+The Receiving Party shall indemnify, defend, and hold harmless the Disclosing Party from and against any and all losses, damages, liabilities, costs, and expenses (including reasonable attorneys' fees) arising from or related to any breach of this Agreement by the Receiving Party, regardless of whether such breach was intentional or negligent, without any cap on liability.
+
+5. REMEDIES
+In the event of a breach or threatened breach of this Agreement, the Disclosing Party shall be entitled to seek injunctive relief, specific performance, and any other remedies available at law or in equity. The Receiving Party hereby waives any requirement for the posting of a bond in connection with such remedies.
+
+6. NON-SOLICITATION
+During the term of this Agreement and for a period of three (3) years thereafter, neither party shall, directly or indirectly, solicit, hire, or attempt to hire any employee, contractor, or consultant of the other party.
+
+7. GOVERNING LAW AND DISPUTE RESOLUTION
+This Agreement shall be governed by and construed in accordance with the laws of the State of Delaware, without regard to its conflict of laws principles. Any dispute arising under this Agreement shall be resolved exclusively through binding arbitration in Wilmington, Delaware, under the rules of the American Arbitration Association. Each party shall bear its own costs and attorneys' fees.
+
+8. ASSIGNMENT
+This Agreement may not be assigned by the Receiving Party without the prior written consent of the Disclosing Party. The Disclosing Party may assign this Agreement freely to any affiliate or successor entity.
+
+9. ENTIRE AGREEMENT
+This Agreement constitutes the entire agreement between the parties concerning the subject matter hereof and supersedes all prior agreements, whether written or oral. No amendment or waiver of any provision shall be effective unless in writing and signed by both parties.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first written above.`;
+
+  document.getElementById('paste-textarea').value = sample;
+  document.getElementById('paste-textarea').style.display = 'block';
+  document.getElementById('analyze-btn').style.display = 'inline-block';
+}
+
+// Analyze contract
+async function analyzeContract() {
+  const fileInput = document.getElementById('file-input');
+  const textInput = document.getElementById('paste-textarea').value;
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('loading').classList.add('show');
+
+  try {
+    let response;
+    if (fileInput.files.length > 0) {
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('lang', currentLang);
+      response = await fetch('/api/analyze', { method: 'POST', body: formData });
+    } else if (textInput.trim()) {
+      response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textInput, lang: currentLang })
+      });
+      contractText = textInput;
+    } else {
+      alert('Please upload a file or paste contract text.');
+      document.getElementById('loading').classList.remove('show');
+      document.getElementById('upload-screen').style.display = 'flex';
+      return;
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      alert('Error: ' + data.error);
+      document.getElementById('loading').classList.remove('show');
+      document.getElementById('upload-screen').style.display = 'flex';
+      return;
+    }
+
+    analysisData = data;
+    contractType = data.contract_type || 'General Agreement';
+    renderAnalysis(data);
+  } catch (err) {
+    alert('Analysis failed: ' + err.message);
+    document.getElementById('loading').classList.remove('show');
+    document.getElementById('upload-screen').style.display = 'flex';
+  }
+}
+
+// Render analysis results
+function renderAnalysis(data) {
+  document.getElementById('loading').classList.remove('show');
+  document.getElementById('main-app').style.display = 'grid';
+  document.getElementById('editor-panel').style.display = 'flex';
+  document.getElementById('risk-panel').style.display = 'flex';
+
+  // Render editor with highlighted clauses
+  const editor = document.getElementById('contract-editor');
+  let html = '';
+  const clauses = data.clauses || [];
+
+  clauses.forEach(clause => {
+    const riskClass = 'risk-' + clause.risk_level.toLowerCase();
+    const badgeClass = 'badge-' + clause.risk_level.toLowerCase();
+    html += `<div class="clause ${riskClass}" data-id="${clause.id}" onclick="selectClause(${clause.id})">
+      <span class="clause-badge ${badgeClass}">${clause.risk_level}</span>
+      <strong>${clause.title}</strong><br>
+      <span id="clause-text-${clause.id}">${escapeHtml(clause.original_text)}</span>
+    </div>`;
+  });
+
+  editor.innerHTML = html;
+
+  // Stats bar
+  const high = clauses.filter(c => c.risk_level === 'HIGH').length;
+  const medium = clauses.filter(c => c.risk_level === 'MEDIUM').length;
+  const low = clauses.filter(c => c.risk_level === 'LOW').length;
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat"><span class="stat-dot high"></span>${high} ${t('high_risk')}</div>
+    <div class="stat"><span class="stat-dot medium"></span>${medium} ${t('medium_risk')}</div>
+    <div class="stat"><span class="stat-dot low"></span>${low} ${t('low_risk')}</div>
+    <div class="stat" style="margin-left:auto;color:var(--text-muted);">${clauses.length} ${t('clauses_analyzed')}</div>
+  `;
+
+  // Risk header
+  const score = data.overall_risk_score || 5;
+  const scoreClass = score >= 7 ? 'score-high' : score >= 4 ? 'score-medium' : 'score-low';
+  document.getElementById('risk-header').innerHTML = `
+    <div class="risk-score">
+      <div class="score-circle ${scoreClass}">${score}</div>
+      <div>
+        <div class="score-type">${data.contract_type || 'Contract Analysis'}</div>
+        <div class="score-label">${t('risk_score_label')}</div>
+      </div>
+    </div>
+    <div class="risk-summary">${data.executive_summary || ''}</div>
+  `;
+
+  // Render clauses tab
+  switchTab('clauses', document.querySelector('.risk-tab.active'));
+}
+
+// Switch risk panel tabs
+function switchTab(tab, el) {
+  document.querySelectorAll('.risk-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+
+  const content = document.getElementById('risk-content');
+
+  if (tab === 'clauses') {
+    let html = '';
+    (analysisData.clauses || []).forEach(clause => {
+      const badgeClass = 'badge-' + clause.risk_level.toLowerCase();
+      html += `<div class="clause-card ${currentClauseId === clause.id ? 'active' : ''}" onclick="selectClause(${clause.id})" data-card-id="${clause.id}">
+        <div class="clause-card-header">
+          <span class="clause-card-title">${clause.title}</span>
+          <span class="clause-badge ${badgeClass}">${clause.risk_level}</span>
+        </div>
+        <div class="clause-card-body">${clause.risk_explanation || ''}</div>
+        ${clause.suggested_revision ? `
+          <div class="revision-box">
+            <div class="label">${t('suggested_revision')}</div>
+            ${escapeHtml(clause.suggested_revision)}
+          </div>
+        ` : ''}
+        <div class="clause-card-actions">
+          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openEditModal(${clause.id})">${t('edit_clause')}</button>
+          ${clause.suggested_revision ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); acceptRevision(${clause.id})">${t('accept_suggestion')}</button>` : ''}
+        </div>
+      </div>`;
+    });
+    content.innerHTML = html;
+
+  } else if (tab === 'missing') {
+    let html = '';
+    (analysisData.missing_clauses || []).forEach(mc => {
+      html += `<div class="missing-card">
+        <div class="label">${t('missing_label')}: ${mc.title}</div>
+        <div class="clause-card-body" style="margin-bottom:8px;">${mc.risk_explanation}</div>
+        <div class="revision-box">
+          <div class="label">${t('suggested_addition')}</div>
+          ${escapeHtml(mc.suggested_text || '')}
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="addMissingClause('${escapeAttr(mc.title)}', '${escapeAttr(mc.suggested_text || '')}')"> ${t('add_to_contract')}</button>
+      </div>`;
+    });
+    content.innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:40px;">' + t('no_missing') + '</p>';
+
+  } else if (tab === 'tips') {
+    let html = '';
+    (analysisData.negotiation_tips || []).forEach(tip => {
+      html += `<div class="tip-item">${tip}</div>`;
+    });
+    content.innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:40px;">' + t('no_tips') + '</p>';
+  }
+}
+
+// Select a clause
+function selectClause(id) {
+  currentClauseId = id;
+
+  // Highlight in editor
+  document.querySelectorAll('.clause').forEach(el => el.classList.remove('active'));
+  const clauseEl = document.querySelector(`.clause[data-id="${id}"]`);
+  if (clauseEl) {
+    clauseEl.classList.add('active');
+    clauseEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Highlight card
+  document.querySelectorAll('.clause-card').forEach(el => el.classList.remove('active'));
+  const cardEl = document.querySelector(`.clause-card[data-card-id="${id}"]`);
+  if (cardEl) {
+    cardEl.classList.add('active');
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+// Open edit modal
+function openEditModal(id) {
+  const clause = analysisData.clauses.find(c => c.id === id);
+  if (!clause) return;
+
+  currentClauseId = id;
+  document.getElementById('edit-clause-text').value = clause.original_text;
+  document.getElementById('edit-intent').value = '';
+  document.getElementById('ai-suggestion').style.display = 'none';
+  document.getElementById('edit-modal').classList.add('show');
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('show');
+}
+
+// Get AI suggestion for edit
+async function getAiSuggestion() {
+  const text = document.getElementById('edit-clause-text').value;
+  const intent = document.getElementById('edit-intent').value || 'Make this clause more balanced and protective for both parties';
+
+  document.getElementById('ai-suggest-btn').textContent = 'Thinking...';
+  document.getElementById('ai-suggest-btn').disabled = true;
+
+  try {
+    const response = await fetch('/api/suggest-edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        original_text: text,
+        user_intent: intent,
+        contract_type: contractType,
+        lang: currentLang
+      })
+    });
+    const data = await response.json();
+
+    if (data.revised_text) {
+      const box = document.getElementById('ai-suggestion');
+      document.getElementById('ai-suggestion-text').innerHTML = `
+        <div style="margin-bottom:8px;"><strong>${t('revised_label')}</strong></div>
+        <div style="margin-bottom:12px;">${escapeHtml(data.revised_text)}</div>
+        ${data.legal_notes ? `<div style="font-size:12px;color:var(--text-muted);"><strong>${t('note_label')}</strong> ${escapeHtml(data.legal_notes)}</div>` : ''}
+      `;
+      box.style.display = 'block';
+      window._aiSuggestion = data.revised_text;
+    }
+  } catch (err) {
+    alert('AI suggestion failed: ' + err.message);
+  }
+
+  document.getElementById('ai-suggest-btn').textContent = t('ai_suggest');
+  document.getElementById('ai-suggest-btn').disabled = false;
+}
+
+// Apply AI suggestion
+function applySuggestion() {
+  if (window._aiSuggestion) {
+    document.getElementById('edit-clause-text').value = window._aiSuggestion;
+  }
+}
+
+// Apply manual edit
+function applyEdit() {
+  const newText = document.getElementById('edit-clause-text').value;
+  const clause = analysisData.clauses.find(c => c.id === currentClauseId);
+  if (clause) {
+    clause.original_text = newText;
+    const el = document.getElementById(`clause-text-${currentClauseId}`);
+    if (el) el.textContent = newText;
+  }
+  closeEditModal();
+}
+
+// Accept AI revision for a clause
+function acceptRevision(id) {
+  const clause = analysisData.clauses.find(c => c.id === id);
+  if (clause && clause.suggested_revision) {
+    clause.original_text = clause.suggested_revision;
+    const el = document.getElementById(`clause-text-${id}`);
+    if (el) el.textContent = clause.suggested_revision;
+
+    // Update risk level visually
+    const clauseEl = document.querySelector(`.clause[data-id="${id}"]`);
+    if (clauseEl) {
+      clauseEl.className = 'clause risk-low';
+      clauseEl.querySelector('.clause-badge').className = 'clause-badge badge-low';
+      clauseEl.querySelector('.clause-badge').textContent = 'REVISED';
+    }
+  }
+}
+
+// Add missing clause
+function addMissingClause(title, text) {
+  const editor = document.getElementById('contract-editor');
+  const newId = analysisData.clauses.length + 1;
+  analysisData.clauses.push({
+    id: newId,
+    title: title,
+    original_text: text,
+    risk_level: 'LOW',
+    risk_explanation: 'Newly added clause based on AI recommendation.',
+    suggested_revision: null
+  });
+
+  const div = document.createElement('div');
+  div.className = 'clause risk-low';
+  div.setAttribute('data-id', newId);
+  div.onclick = () => selectClause(newId);
+  div.innerHTML = `<span class="clause-badge badge-low">ADDED</span>
+    <strong>${escapeHtml(title)}</strong><br>
+    <span id="clause-text-${newId}">${escapeHtml(text)}</span>`;
+  editor.appendChild(div);
+}
+
+// Export contract as PDF or Word
+async function exportAs(format) {
+  if (!analysisData || !analysisData.clauses) {
+    alert('No contract data to export.');
+    return;
+  }
+
+  const payload = {
+    clauses: analysisData.clauses,
+    contract_type: analysisData.contract_type || 'Reviewed Contract',
+    parties: analysisData.parties || [],
+    format: format
+  };
+
+  try {
+    const response = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      alert('Export failed: ' + (err.error || 'Unknown error'));
+      return;
+    }
+
+    const blob = await response.blob();
+    const ext = format === 'docx' ? 'docx' : 'pdf';
+    const mime = format === 'docx'
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : 'application/pdf';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([blob], { type: mime }));
+    a.download = `clauseguard-reviewed-contract.${ext}`;
+    a.click();
+  } catch (err) {
+    alert('Export failed: ' + err.message);
+  }
+}
+
+// Reset
+function resetApp() {
+  document.getElementById('main-app').style.display = 'none';
+  document.getElementById('upload-screen').style.display = 'flex';
+  document.getElementById('paste-textarea').value = '';
+  document.getElementById('paste-textarea').style.display = 'none';
+  document.getElementById('analyze-btn').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  analysisData = null;
+  currentClauseId = null;
+}
+
+// Utilities
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function escapeAttr(str) {
+  return str.replace(/'/g, "\\'").replace(/\n/g, ' ');
+}
+</script>
+</body>
+</html>

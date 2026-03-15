@@ -1,0 +1,6 @@
+flask
+gunicorn
+openai
+python-docx
+PyPDF2
+fpdf2
