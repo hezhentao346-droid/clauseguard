@@ -70,17 +70,17 @@ def call_ai(system_prompt, user_prompt, temperature=0.1):
         return {"error": str(e)}
 
 
-def extract_text_from_file(file):
-    """Extract text from uploaded PDF, DOCX, or TXT files."""
-    filename = file.filename.lower()
+def extract_text_from_bytes(file_bytes, filename):
+    """Extract text from file bytes (PDF, DOCX, or TXT)."""
+    filename = filename.lower()
 
     if filename.endswith('.txt'):
-        return file.read().decode('utf-8')
+        return file_bytes.decode('utf-8')
 
     elif filename.endswith('.pdf'):
         try:
             from PyPDF2 import PdfReader
-            reader = PdfReader(io.BytesIO(file.read()))
+            reader = PdfReader(io.BytesIO(file_bytes))
             text = ""
             for page in reader.pages:
                 text += page.extract_text() + "\n"
@@ -91,7 +91,7 @@ def extract_text_from_file(file):
     elif filename.endswith('.docx'):
         try:
             from docx import Document
-            doc = Document(io.BytesIO(file.read()))
+            doc = Document(io.BytesIO(file_bytes))
             return "\n".join([p.text for p in doc.paragraphs])
         except Exception as e:
             return f"Error reading DOCX: {str(e)}"
@@ -123,19 +123,19 @@ def analyze_contract():
 
     if 'file' in request.files and request.files['file'].filename:
         uploaded_file = request.files['file']
-        filename = uploaded_file.filename.lower()
+        orig_filename = uploaded_file.filename
+        filename_lower = orig_filename.lower()
         file_bytes = uploaded_file.read()
 
         # Store original file for later export
         uploaded_files[sid] = {
             'bytes': file_bytes,
-            'filename': uploaded_file.filename,
-            'type': 'pdf' if filename.endswith('.pdf') else 'docx' if filename.endswith('.docx') else 'txt'
+            'filename': orig_filename,
+            'type': 'pdf' if filename_lower.endswith('.pdf') else 'docx' if filename_lower.endswith('.docx') else 'txt'
         }
 
         # Extract text from the stored bytes
-        uploaded_file.seek(0)
-        contract_text = extract_text_from_file(uploaded_file)
+        contract_text = extract_text_from_bytes(file_bytes, orig_filename)
         lang = request.form.get('lang', 'en')
     elif request.json and 'text' in request.json:
         contract_text = request.json['text']
