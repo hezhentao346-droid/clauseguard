@@ -253,120 +253,134 @@ def export_contract():
         return export_pdf(clauses, contract_type, parties)
 
 
+def safe_text(text):
+    """Remove characters that can't be encoded in latin-1 for PDF."""
+    return text.encode('latin-1', errors='replace').decode('latin-1')
+
+
 def export_pdf(clauses, contract_type, parties):
     """Generate a professional PDF of the reviewed contract."""
-    from fpdf import FPDF
+    try:
+        from fpdf import FPDF
 
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=25)
-    pdf.add_page()
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=25)
+        pdf.add_page()
 
-    pdf.set_font('Helvetica', 'B', 20)
-    pdf.cell(0, 15, contract_type.upper(), ln=True, align='C')
-    pdf.ln(5)
-
-    if parties:
-        pdf.set_font('Helvetica', '', 11)
-        pdf.cell(0, 8, f'Parties: {" and ".join(parties)}', ln=True, align='C')
+        pdf.set_font('Helvetica', 'B', 18)
+        pdf.cell(0, 15, safe_text(contract_type.upper()), ln=True, align='C')
         pdf.ln(5)
 
-    pdf.set_font('Helvetica', 'I', 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 8, 'Reviewed and revised by ClauseGuard AI', ln=True, align='C')
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(10)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(8)
+        if parties:
+            pdf.set_font('Helvetica', '', 11)
+            pdf.cell(0, 8, safe_text(f'Parties: {" and ".join(parties)}'), ln=True, align='C')
+            pdf.ln(5)
 
-    for clause in clauses:
-        title = clause.get('title', 'Untitled Clause')
-        text = clause.get('original_text', '')
-        risk = clause.get('risk_level', 'LOW')
+        pdf.set_font('Helvetica', 'I', 9)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 8, 'Reviewed and revised by ClauseGuard AI', ln=True, align='C')
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(10)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(8)
 
-        pdf.set_font('Helvetica', 'B', 13)
-        risk_label = f' [{risk} RISK]' if risk in ('HIGH', 'MEDIUM') else ''
-        pdf.cell(0, 10, f'{title}{risk_label}', ln=True)
+        for clause in clauses:
+            title = clause.get('title', 'Untitled Clause')
+            text = clause.get('original_text', '')
+            risk = clause.get('risk_level', 'LOW')
 
-        pdf.set_font('Helvetica', '', 11)
-        pdf.multi_cell(0, 6, text)
-        pdf.ln(6)
+            pdf.set_font('Helvetica', 'B', 13)
+            risk_label = f' [{risk} RISK]' if risk in ('HIGH', 'MEDIUM') else ''
+            pdf.cell(0, 10, safe_text(f'{title}{risk_label}'), ln=True)
 
-    pdf.ln(10)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(5)
-    pdf.set_font('Helvetica', 'I', 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 8, 'This document was reviewed using ClauseGuard AI. It does not constitute legal advice.', ln=True, align='C')
+            pdf.set_font('Helvetica', '', 11)
+            pdf.multi_cell(0, 6, safe_text(text))
+            pdf.ln(6)
 
-    buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
+        pdf.ln(10)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(5)
+        pdf.set_font('Helvetica', 'I', 9)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 8, 'Reviewed by ClauseGuard AI. Not legal advice.', ln=True, align='C')
 
-    return send_file(buf, mimetype='application/pdf', as_attachment=True,
-                     download_name='clauseguard-reviewed-contract.pdf')
+        buf = io.BytesIO()
+        pdf.output(buf)
+        buf.seek(0)
+
+        return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                         download_name='clauseguard-reviewed-contract.pdf')
+    except Exception as e:
+        return jsonify({"error": f"PDF export failed: {str(e)}"}), 500
 
 
 def export_docx(clauses, contract_type, parties):
     """Generate a professional Word document of the reviewed contract."""
-    from docx import Document
-    from docx.shared import Pt, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        return jsonify({"error": "Word export not available on this server. Use PDF instead."}), 500
 
-    doc = Document()
+    try:
+        doc = Document()
 
-    title = doc.add_heading(contract_type.upper(), level=0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title = doc.add_heading(contract_type.upper(), level=0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    if parties:
+        if parties:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(f'Parties: {" and ".join(parties)}')
+            run.font.size = Pt(11)
+
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(f'Parties: {" and ".join(parties)}')
-        run.font.size = Pt(11)
+        run = p.add_run('Reviewed and revised by ClauseGuard AI')
+        run.font.size = Pt(9)
+        run.font.italic = True
+        run.font.color.rgb = RGBColor(128, 128, 128)
 
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run('Reviewed and revised by ClauseGuard AI')
-    run.font.size = Pt(9)
-    run.font.italic = True
-    run.font.color.rgb = RGBColor(128, 128, 128)
+        doc.add_paragraph('_' * 80)
 
-    doc.add_paragraph('_' * 80)
+        for clause in clauses:
+            title_text = clause.get('title', 'Untitled Clause')
+            text = clause.get('original_text', '')
+            risk = clause.get('risk_level', 'LOW')
 
-    for clause in clauses:
-        title_text = clause.get('title', 'Untitled Clause')
-        text = clause.get('original_text', '')
-        risk = clause.get('risk_level', 'LOW')
+            h = doc.add_heading(level=2)
+            h.add_run(title_text)
+            if risk == 'HIGH':
+                risk_run = h.add_run('  [HIGH RISK]')
+                risk_run.font.color.rgb = RGBColor(255, 71, 87)
+                risk_run.font.size = Pt(10)
+            elif risk == 'MEDIUM':
+                risk_run = h.add_run('  [MEDIUM RISK]')
+                risk_run.font.color.rgb = RGBColor(255, 165, 2)
+                risk_run.font.size = Pt(10)
 
-        h = doc.add_heading(level=2)
-        h.add_run(title_text)
-        if risk == 'HIGH':
-            risk_run = h.add_run('  [HIGH RISK]')
-            risk_run.font.color.rgb = RGBColor(255, 71, 87)
-            risk_run.font.size = Pt(10)
-        elif risk == 'MEDIUM':
-            risk_run = h.add_run('  [MEDIUM RISK]')
-            risk_run.font.color.rgb = RGBColor(255, 165, 2)
-            risk_run.font.size = Pt(10)
+            p = doc.add_paragraph(text)
+            p.style.font.size = Pt(11)
 
-        p = doc.add_paragraph(text)
-        p.style.font.size = Pt(11)
+        doc.add_paragraph('_' * 80)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run('This document was reviewed using ClauseGuard AI. It does not constitute legal advice.')
+        run.font.size = Pt(9)
+        run.font.italic = True
+        run.font.color.rgb = RGBColor(128, 128, 128)
 
-    doc.add_paragraph('_' * 80)
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run('This document was reviewed using ClauseGuard AI. It does not constitute legal advice.')
-    run.font.size = Pt(9)
-    run.font.italic = True
-    run.font.color.rgb = RGBColor(128, 128, 128)
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-
-    return send_file(buf,
-                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                     as_attachment=True,
-                     download_name='clauseguard-reviewed-contract.docx')
+        return send_file(buf,
+                         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                         as_attachment=True,
+                         download_name='clauseguard-reviewed-contract.docx')
+    except Exception as e:
+        return jsonify({"error": f"Word export failed: {str(e)}"}), 500
 
 
 @app.route('/health')
